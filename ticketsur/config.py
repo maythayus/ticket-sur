@@ -62,3 +62,7 @@ DECOTE = float(os.getenv("TICKET_DECOTE", "0.97"))
 # de la version corrigee proposee par `ticket analyser`.
 MISE_MAX = float(os.getenv("TICKET_MISE_MAX", "5"))
 COTE_MIN_CORRIGEE = float(os.getenv("TICKET_COTE_MIN_CORRIGEE", "1.30"))
+
+# Part de la mise rendue par un bookmaker sur « les deux equipes marquent », que la
+# source ne cote pas : sert a estimer la cote de ce marche (cote = retour / probabilite).
+RETOUR_ESTIME = float(os.getenv("TICKET_RETOUR_ESTIME", "0.93"))

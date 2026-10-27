@@ -7,9 +7,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import combinations
 
+from ticketsur import config
 from ticketsur.calibration import Calibration
 from ticketsur.donnees import Match
-from ticketsur.marches import cote, libelle, probas_justes
+from ticketsur.marches import COTES_ESTIMEES, cote, libelle, probas_justes
 
 
 @dataclass
@@ -19,6 +20,10 @@ class Selection:
     proba: float  # calibree sur l'historique
     proba_marche: float
     cote: float
+
+    @property
+    def cote_estimee(self) -> bool:
+        return self.marche in COTES_ESTIMEES
 
     @property
     def libelle(self) -> str:
@@ -49,10 +54,15 @@ def candidats(
     liste: list[Selection] = []
     for match in matchs:
         for marche, proba_marche in probas_justes(match.cotes).items():
-            valeur = cote(match.cotes, marche)
+            proba = calibration.proba(marche, proba_marche)
+            if marche in COTES_ESTIMEES:
+                # Pas de cote dans la source : celle qu'un bookmaker proposerait a peu
+                # pres, marge comprise. A verifier avant de jouer.
+                valeur = config.RETOUR_ESTIME / proba
+            else:
+                valeur = cote(match.cotes, marche)
             if valeur is None or valeur < cote_min_selection:
                 continue
-            proba = calibration.proba(marche, proba_marche)
             liste.append(Selection(match, marche, proba, proba_marche, valeur))
     liste.sort(key=lambda s: s.proba, reverse=True)
     return liste

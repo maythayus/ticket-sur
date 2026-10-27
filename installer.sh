@@ -38,7 +38,7 @@ Type=oneshot
 Environment=TICKET_CLAUDE=${claude_bin:-claude}
 ExecStartPre=-$HOME/.local/bin/ticket maj --saisons 1
 ExecStartPre=-$HOME/.local/bin/ticket bilan
-ExecStart=$HOME/.local/bin/ticket jour --notifier
+ExecStart=$HOME/.local/bin/ticket jour --notifier --buteurs
 UNIT
     cat > "$unites/ticket-sur.timer" <<UNIT
 [Unit]

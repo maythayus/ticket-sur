@@ -1,3 +1,4 @@
+import math
 import tempfile
 import unittest
 from datetime import date
@@ -144,3 +145,34 @@ class AnalyseTicket(unittest.TestCase):
 
     def test_probabilite_estimee(self):
         self.assertAlmostEqual(Jambe("A", "", 1.80, "resultat").proba, 0.5)
+
+
+from ticketsur.buteurs import proba_marque
+from ticketsur.buts import attendus, deux_marquent
+
+
+class Buts(unittest.TestCase):
+    def test_attendus_reproduisent_le_marche(self):
+        import math
+        dom, ext = attendus(0.5, 0.25, 0.55)
+        total = dom + ext
+        self.assertAlmostEqual(1 - math.exp(-total) * (1 + total + total**2 / 2), 0.55, places=4)
+        self.assertGreater(dom, ext)
+
+    def test_deux_marquent_dans_les_marches(self):
+        p = probas_justes(match().cotes)
+        self.assertAlmostEqual(p["2M"] + p["2M-non"], 1)
+        self.assertTrue(gagne("2M", 1, 1))
+        self.assertFalse(gagne("2M", 3, 0))
+        self.assertAlmostEqual(deux_marquent(1.0, 1.0), (1 - math.exp(-1)) ** 2)
+
+    def test_cote_estimee_pour_2m(self):
+        (s,) = [s for s in candidats([match()], Calibration(), 1.0) if s.marche == "2M"]
+        self.assertTrue(s.cote_estimee)
+        self.assertAlmostEqual(s.cote * s.proba, 0.93)
+
+    def test_proba_buteur(self):
+        titulaire = proba_marque(2.0, 6, 20, True)
+        self.assertGreater(titulaire, proba_marque(2.0, 6, 20, False))
+        self.assertGreater(titulaire, proba_marque(2.0, 2, 20, True))
+        self.assertLess(proba_marque(3.0, 20, 20, True), 0.85)

@@ -82,6 +82,8 @@ ticket jour                                # ticket du jour, vérifié par Claud
 ticket jour --cote-min 1.30 --cote-max 1.60   # plus sûr, rapporte moins
 ticket jour --date 2026-10-28 --essai      # un autre jour, sans l'enregistrer
 ticket jour --sans-claude                  # sans vérification (instantané)
+ticket jour --buteurs                      # avec les buteurs potentiels
+ticket buteurs --date 2026-10-28           # buteurs seuls
 ticket bilan                               # réussite réelle vs annoncée
 ticket backtest                            # rejouer les saisons passées
 ticket calibration                         # probabilité du marché -> taux réel
@@ -90,6 +92,22 @@ ticket maj                                 # retélécharger, recalibrer
 
 **Cote affichée** = moyenne du marché. Joue seulement si ton bookmaker paie au moins
 autant. Il est souvent un peu en dessous, et c'est déjà compté dans le backtest.
+
+## « Les 2 équipes marquent » et buteurs potentiels
+
+**Les 2 équipes marquent** fait partie de la sélection automatique. football-data ne cote
+pas ce marché : les buts attendus de chaque équipe sont déduits des cotes 1N2 et
+plus/moins de 2.5 (`buts.py`), puis la probabilité est calibrée sur l'historique comme
+les autres marchés (60 % annoncé → 61 % réel). Sa cote est **estimée** (marge de 7 %
+supposée) : le ticket l'indique, vérifie-la chez ton bookmaker.
+
+**Buteurs potentiels** (`ticket buteurs`, ou `ticket jour --buteurs`) : pour les
+attaques les plus fortes du jour, Claude cherche les meilleurs buteurs de la saison et
+leur statut (titulaire probable ou non). La chance de marquer combine les buts attendus
+de l'équipe et la part des buts de l'équipe marqués par le joueur ; le total de l'équipe
+vient de football-data, pas du web. L'outil donne la **cote à exiger** : en dessous, le
+pari perd de l'argent en moyenne. Pas de calibration possible faute d'historique de
+joueurs : ces chiffres sont des estimations, et les buteurs restent hors du ticket.
 
 ## Analyser tes propres tickets
 
@@ -155,6 +173,8 @@ calibration honnête.
 | `backtest.py` | saisons rejouées en avant |
 | `suivi.py` | SQLite : un ticket par jour, réglé avec le score réel ; journal des tickets joués |
 | `analyse.py` | diagnostic d'un ticket joué, version corrigée |
+| `buts.py` | buts attendus déduits des cotes, « les 2 équipes marquent » |
+| `buteurs.py` | buteurs potentiels : recherche Claude + buts attendus, cote à exiger |
 
 Tests : `python3 -m unittest discover -s tests`
 

@@ -15,6 +15,7 @@ from pathlib import Path
 from ticketsur import config
 from ticketsur.analyse import NOMS, Billet, depuis_dict, diagnostiquer, issue, version_corrigee
 from ticketsur.backtest import Regle, backtest
+from ticketsur.buteurs import chercher as chercher_buteurs
 from ticketsur.calibration import Calibration, calibrer
 from ticketsur.donnees import charger_historique, maj_historique, matchs_a_venir, saison_de
 from ticketsur.marches import MARCHES
@@ -155,11 +156,7 @@ def cmd_jour(args: argparse.Namespace) -> int:
     calibration = _calibration()
     if not calibration:
         return 1
-    jour = date.fromisoformat(args.date) if args.date else date.today()
-    matchs = matchs_a_venir(jour)
-    if jour == date.today():
-        limite = datetime.now().astimezone() + timedelta(minutes=15)
-        matchs = [m for m in matchs if not (envoi := m.coup_envoi()) or envoi > limite]
+    jour, matchs = _matchs_du_jour(args)
     if not matchs:
         message = f"Aucun match couvert à venir le {_date_longue(jour)}."
         print(message)
@@ -191,8 +188,9 @@ def cmd_jour(args: argparse.Namespace) -> int:
         envoi = s.match.coup_envoi()
         print(f"  {envoi.strftime('%H:%M') if envoi else '--:--'}  {s.match.ligue:<4}"
               f"{s.match.domicile} - {s.match.exterieur}")
-        print(f"         {s.libelle} : cote {s.cote:.2f}, {s.proba:.0%} "
-              f"(marché {s.proba_marche:.0%})")
+        cote_txt = f"cote estimée ~{s.cote:.2f}, à vérifier" if s.cote_estimee else f"cote {s.cote:.2f}"
+        print(f"         {s.libelle} : {cote_txt}, {s.proba:.0%} "
+              f"(modèle {s.proba_marche:.0%})")
         if verdicts and s.cle in verdicts:
             print(f"         Claude [{verdicts[s.cle].verdict}] {verdicts[s.cle].raison}")
     if verdicts is None:
@@ -200,12 +198,54 @@ def cmd_jour(args: argparse.Namespace) -> int:
     print(f"\nCalibré sur {calibration.matchs} matchs. Cote affichée = moyenne du marché : "
           "joue seulement si ton bookmaker paie au moins autant.")
 
+    buteurs = afficher_buteurs(matchs, args.buteurs) if args.buteurs else []
     if not args.essai:
         enregistrer(ouvrir(config.SUIVI), jour, ticket, verdicts)
     if args.notifier:
         corps = "\n".join(f"{s.match.domicile} - {s.match.exterieur} : {s.libelle} ({s.cote:.2f})"
                           for s in ticket.selections)
+        if buteurs:
+            corps += "\n\nButeurs (cote à exiger) : " + ", ".join(
+                f"{b.nom} {b.cote_juste:.2f}" for b in buteurs[:3])
         _notifier(f"Ticket du jour : cote {ticket.cote:.2f}, {ticket.proba:.0%}", corps)
+    return 0
+
+
+def _matchs_du_jour(args: argparse.Namespace) -> tuple[date, list]:
+    jour = date.fromisoformat(args.date) if args.date else date.today()
+    matchs = matchs_a_venir(jour)
+    if jour == date.today():
+        limite = datetime.now().astimezone() + timedelta(minutes=15)
+        matchs = [m for m in matchs if not (envoi := m.coup_envoi()) or envoi > limite]
+    return jour, matchs
+
+
+def afficher_buteurs(matchs: list, equipes: int) -> list:
+    print(f"\nButeurs potentiels (recherche Claude sur les {equipes} attaques les plus fortes)…",
+          flush=True)
+    try:
+        buteurs = chercher_buteurs(matchs, equipes)
+    except VerificationImpossible as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return []
+    if not buteurs:
+        print("  Aucun buteur trouvé.")
+        return []
+    print("  Non calibré : estimation à partir des buts attendus et de la saison du joueur.")
+    print("  Joue seulement si ton bookmaker paie AU MOINS la cote à exiger.\n")
+    for b in buteurs[:8]:
+        etat = "titulaire probable" if b.titulaire else "incertain"
+        print(f"  {b.nom:<24.24} {b.equipe:<16.16} {b.proba:>4.0%}  cote à exiger {b.cote_juste:>5.2f}"
+              f"   ({b.buts} buts, {etat})")
+    return buteurs
+
+
+def cmd_buteurs(args: argparse.Namespace) -> int:
+    jour, matchs = _matchs_du_jour(args)
+    if not matchs:
+        print(f"Aucun match couvert à venir le {_date_longue(jour)}.")
+        return 0
+    afficher_buteurs(matchs, args.equipes)
     return 0
 
 
@@ -378,7 +418,14 @@ def construire_parser() -> argparse.ArgumentParser:
     jour.add_argument("--sans-claude", action="store_true", help="sans vérification de l'actualité")
     jour.add_argument("--notifier", action="store_true", help="notification de bureau")
     jour.add_argument("--essai", action="store_true", help="ne pas enregistrer dans le suivi")
+    jour.add_argument("--buteurs", type=int, nargs="?", const=4, default=0, metavar="N",
+                      help="ajouter les buteurs potentiels des N meilleures attaques (défaut 4)")
     jour.set_defaults(fonction=cmd_jour)
+
+    but = sous.add_parser("buteurs", help="buteurs potentiels du jour et cote à exiger")
+    but.add_argument("--date", help="AAAA-MM-JJ (défaut : aujourd'hui)")
+    but.add_argument("--equipes", type=int, default=4, help="nombre d'attaques étudiées")
+    but.set_defaults(fonction=cmd_buteurs)
 
     test = sous.add_parser("backtest", help="mesurer la règle sur les saisons passées")
     options_regle(test)
