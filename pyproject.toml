@@ -1,0 +1,13 @@
+[project]
+name = "ticket-sur"
+version = "0.1.0"
+description = "Tickets de paris courts, calibres sur l'historique, verifies par Claude Code"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+ticket = "ticketsur.cli:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
