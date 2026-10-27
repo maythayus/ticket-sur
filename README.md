@@ -91,6 +91,36 @@ ticket maj                                 # retélécharger, recalibrer
 **Cote affichée** = moyenne du marché. Joue seulement si ton bookmaker paie au moins
 autant. Il est souvent un peu en dessous, et c'est déjà compté dans le backtest.
 
+## Analyser tes propres tickets
+
+`ticket analyser` lit une capture d'écran ou une photo de ticket (FDJ, Winamax, Unibet…)
+avec Claude, estime sa vraie chance de passer, signale les erreurs connues et propose
+une version corrigée : les une ou deux meilleures sélections du même ticket.
+
+```bash
+ticket analyser ~/Images/ticket.jpg            # lecture par Claude
+ticket analyser ~/Images/ticket.jpg --journal  # et ajout au journal
+ticket analyser --cotes 1.85 1.33 1.26 --mise 2   # saisie à la main
+ticket journal                                 # bilan de tes tickets joués
+ticket journal --detail 5                      # analyse d'un ticket du journal
+ticket journal --statut 1 gagne                # régler un ticket
+```
+
+Les erreurs relevées, tirées de vrais tickets :
+
+| Erreur | Pourquoi elle coûte |
+| --- | --- |
+| 4 à 9 sélections | chaque sélection passe souvent, mais il les faut toutes : le ticket se perd à une sélection près |
+| Cote totale de 5 à 200 | 1 chance sur 10 à 1 sur 600 |
+| Buteur, mi-temps, combinés maison | marges les plus lourdes, ou beaucoup de hasard |
+| Sports et championnats mélangés | rien pour vérifier la sélection |
+| Combi boosté | +2,5 à +12 % de gain, contre 10 % de marge perdue par sélection ajoutée |
+| Mises de 25 à 40 € | au-dessus de la limite fixée (`TICKET_MISE_MAX`, 5 € par défaut) |
+
+La probabilité d'un ticket joué ailleurs est estimée à partir de sa cote et du type de
+pari (le retour aux joueurs est plafonné par la loi à 85 % en moyenne en France) : c'est
+un ordre de grandeur, pas la calibration de `ticket jour`.
+
 ## Réglages
 
 Variables d'environnement, ou options de `ticket jour` / `ticket backtest` :
@@ -103,7 +133,8 @@ Variables d'environnement, ou options de `ticket jour` / `ticket backtest` :
 | `TICKET_DECOTE` | 0.97 | écart supposé entre ton bookmaker et la moyenne (backtest) |
 | `TICKET_CLAUDE` | `claude` | chemin de Claude Code |
 | `TICKET_CLAUDE_MODELE` | `sonnet` | modèle de la vérification |
-| `TICKET_DONNEES` | `./donnees` | historique, calibration, suivi |
+| `TICKET_MISE_MAX` | 5 | mise au-delà de laquelle `ticket analyser` alerte |
+| `TICKET_DONNEES` | `./donnees` | historique, calibration, suivi, journal |
 
 ## Couverture
 
@@ -122,7 +153,8 @@ calibration honnête.
 | `selection.py` | meilleurs tickets d'une fourchette de cote |
 | `verification.py` | Claude Code en mode `-p`, recherche web, sortie JSON structurée |
 | `backtest.py` | saisons rejouées en avant |
-| `suivi.py` | SQLite : un ticket par jour, réglé avec le score réel |
+| `suivi.py` | SQLite : un ticket par jour, réglé avec le score réel ; journal des tickets joués |
+| `analyse.py` | diagnostic d'un ticket joué, version corrigée |
 
 Tests : `python3 -m unittest discover -s tests`
 

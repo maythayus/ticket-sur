@@ -57,3 +57,8 @@ MAX_SELECTIONS = int(os.getenv("TICKET_MAX_SELECTIONS", "2"))
 # Les cotes de football-data sont une moyenne du marche ; un seul bookmaker paie
 # d'ordinaire un peu moins. Le backtest applique cette decote a chaque selection.
 DECOTE = float(os.getenv("TICKET_DECOTE", "0.97"))
+
+# Garde-fous pour les tickets joues a cote : mise maximale conseillee, et cote minimale
+# de la version corrigee proposee par `ticket analyser`.
+MISE_MAX = float(os.getenv("TICKET_MISE_MAX", "5"))
+COTE_MIN_CORRIGEE = float(os.getenv("TICKET_COTE_MIN_CORRIGEE", "1.30"))

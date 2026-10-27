@@ -14,6 +14,7 @@ import json
 import subprocess
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
 from ticketsur import config
 from ticketsur.selection import Selection
@@ -128,3 +129,63 @@ def verifier(selections: list[Selection]) -> dict[tuple, Verdict]:
             verdict = item.get("verdict") if item.get("verdict") in ("ok", "risque", "eviter") else "ok"
             verdicts[selections[numero].cle] = Verdict(verdict, str(item.get("raison", "")))
     return verdicts
+
+
+SCHEMA_CAPTURE = {
+    "type": "object",
+    "properties": {
+        "bookmaker": {"type": "string"},
+        "jour": {"type": ["string", "null"], "description": "AAAA-MM-JJ si visible"},
+        "mise": {"type": ["number", "null"]},
+        "cote": {"type": ["number", "null"], "description": "cote totale affichee"},
+        "boost": {"type": "number", "description": "boost combine, 0.025 pour +2,5 %"},
+        "statut": {"type": "string", "enum": ["gagne", "perdu", "en_cours", "inconnu"]},
+        "jambes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "match": {"type": "string"},
+                    "sport": {"type": "string"},
+                    "pari": {"type": "string", "description": "type de pari puis selection"},
+                    "cote": {"type": "number"},
+                    "resultat": {"type": "string", "enum": ["gagne", "perdu", "inconnu"]},
+                },
+                "required": ["match", "sport", "pari", "cote", "resultat"],
+            },
+        },
+    },
+    "required": ["bookmaker", "statut", "jambes", "boost"],
+}
+
+
+def lire_capture(chemin: Path) -> dict:
+    """Transcrit une capture de ticket (FDJ, Winamax, Unibet...) en donnees structurees."""
+    chemin = chemin.resolve()
+    consigne = (
+        f"Lis l'image {chemin} avec l'outil Read : c'est un ticket de paris sportifs. "
+        "Transcris-le fidelement selon le schema, sans rien deviner. Pour chaque selection : "
+        "le match, le sport, le type de pari suivi de la selection (ex. « Double Chance "
+        "(Mi-temps) : Nul/Turquie », « Buteur : Lamine Yamal »), la cote, et le resultat "
+        "s'il est affiche (coche verte = gagne, croix rouge = perdu, sinon inconnu). "
+        "Statut du ticket : gagne, perdu, en_cours, ou inconnu. Le boost combine en "
+        "fraction (+2,5 % -> 0.025), 0 s'il n'y en a pas. Si la liste des selections est "
+        "repliee ou absente, laisse `jambes` vide."
+    )
+    commande = [
+        config.CLAUDE, "-p", consigne,
+        "--model", config.CLAUDE_MODELE,
+        "--allowedTools", "Read",
+        "--add-dir", str(chemin.parent),
+        "--output-format", "json",
+        "--json-schema", json.dumps(SCHEMA_CAPTURE),
+    ]
+    try:
+        sortie = subprocess.run(commande, capture_output=True, text=True,
+                                timeout=config.CLAUDE_DELAI, cwd=chemin.parent, check=False)
+        reponse = json.loads(sortie.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        raise VerificationImpossible(f"Lecture de la capture impossible : {exc}") from exc
+    if reponse.get("is_error") or not isinstance(reponse.get("structured_output"), dict):
+        raise VerificationImpossible(f"Claude en echec : {str(reponse.get('result'))[:300]}")
+    return reponse["structured_output"]

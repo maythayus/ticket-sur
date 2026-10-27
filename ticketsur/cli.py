@@ -3,21 +3,33 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import shutil
 import subprocess
 import sys
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from ticketsur import config
+from ticketsur.analyse import NOMS, Billet, depuis_dict, diagnostiquer, issue, version_corrigee
 from ticketsur.backtest import Regle, backtest
 from ticketsur.calibration import Calibration, calibrer
 from ticketsur.donnees import charger_historique, maj_historique, matchs_a_venir, saison_de
 from ticketsur.marches import MARCHES
 from ticketsur.selection import Selection, Ticket, candidats, meilleurs_tickets
-from ticketsur.suivi import enregistrer, marge_erreur, ouvrir, regler, statistiques
-from ticketsur.verification import Verdict, VerificationImpossible, verifier
+from ticketsur.suivi import (
+    corriger_statut,
+    enregistrer,
+    journal,
+    journaliser,
+    marge_erreur,
+    ouvrir,
+    regler,
+    statistiques,
+)
+from ticketsur.verification import Verdict, VerificationImpossible, lire_capture, verifier
 
 JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
@@ -215,6 +227,132 @@ def cmd_bilan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _statut(billet: Billet) -> str | None:
+    return billet.statut if billet.statut in ("gagne", "perdu") else issue(billet)
+
+
+def _afficher_analyse(billet: Billet) -> None:
+    for j in billet.jambes:
+        marque = {"gagne": "✓", "perdu": "✗"}.get(j.resultat or "", " ")
+        print(f"  {marque} {j.match:<32.32} {j.pari:<42.42} {j.cote:>5.2f}  ~{j.proba:.0%}")
+    mise = f", mise {billet.mise:.2f} €" if billet.mise else ""
+    print(f"\nCote {billet.cote_calculee:.2f}{mise} : chance estimée {billet.proba:.1%} "
+          f"(1 sur {round(1 / billet.proba) if billet.proba else '∞'}), "
+          f"rend en moyenne {billet.esperance:.0%} de la mise.")
+    alertes = diagnostiquer(billet)
+    if alertes:
+        print()
+        for alerte in alertes:
+            print(f"  {'!!' if alerte.gravite == 'grave' else ' !'} {alerte.message}")
+    corrigee = version_corrigee(billet)
+    if corrigee:
+        print(f"\nVersion corrigée : cote {corrigee.cote_calculee:.2f}, "
+              f"chance estimée {corrigee.proba:.0%}")
+        for j in corrigee.jambes:
+            print(f"    {j.match} : {j.pari} ({j.cote:.2f})")
+        if all(j.resultat for j in corrigee.jambes) and _statut(billet):
+            verdict = issue(corrigee)
+            print(f"    -> aurait été {'GAGNÉE' if verdict == 'gagne' else 'perdue'} "
+                  f"(le ticket joué : {'gagné' if _statut(billet) == 'gagne' else 'perdu'})")
+
+
+def cmd_analyser(args: argparse.Namespace) -> int:
+    donnees: list[dict] = []
+    if args.cotes:
+        donnees.append({"jambes": [{"match": f"Sélection {i + 1}", "pari": "", "cote": c, "type": "resultat"}
+                                   for i, c in enumerate(args.cotes)], "mise": args.mise})
+    for capture in args.captures:
+        print(f"Lecture de {capture} par Claude…", flush=True)
+        try:
+            lu = lire_capture(Path(capture))
+        except VerificationImpossible as exc:
+            print(f"  {exc}", file=sys.stderr)
+            continue
+        if args.mise is not None:
+            lu["mise"] = args.mise
+        donnees.append(lu)
+    if not donnees:
+        print("Rien à analyser : donne une capture ou --cotes.", file=sys.stderr)
+        return 1
+    connexion = ouvrir(config.SUIVI) if args.journal else None
+    for brut in donnees:
+        billet = depuis_dict(brut)
+        print()
+        _afficher_analyse(billet)
+        if connexion:
+            print(f"\nAjouté au journal sous le n° {journaliser(connexion, brut)}.")
+    return 0
+
+
+def cmd_journal(args: argparse.Namespace) -> int:
+    connexion = ouvrir(config.SUIVI)
+    if args.importer:
+        for brut in json.loads(Path(args.importer).read_text(encoding="utf-8")):
+            journaliser(connexion, brut)
+        print(f"Import de {args.importer} terminé.\n")
+    if args.statut:
+        numero, statut = args.statut
+        if not corriger_statut(connexion, int(numero), statut):
+            print(f"Pas de ticket n° {numero} dans le journal.", file=sys.stderr)
+            return 1
+    entrees = journal(connexion)
+    if not entrees:
+        print("Journal vide : `ticket analyser capture.jpg --journal` pour y ajouter un ticket.")
+        return 0
+    if args.detail:
+        for numero, brut in entrees:
+            if numero == args.detail:
+                _afficher_analyse(depuis_dict(brut))
+        return 0
+
+    print(f"{'n°':>3}  {'jour':<10} {'sél.':>4} {'cote':>7} {'mise':>6}  {'chance':>7}  statut")
+    mises = gains = 0.0
+    jambes_connues = jambes_gagnees = 0
+    par_type: dict[str, list[int]] = {}
+    corrigees = [0.0, 0.0]  # mises et gains de la version corrigee, a mise egale
+    par_taille: dict[int, list[int]] = {}
+    for numero, brut in entrees:
+        billet = depuis_dict(brut)
+        statut = _statut(billet)
+        cote = billet.cote or billet.cote_calculee
+        print(f"{numero:>3}  {(billet.jour or '?'):<10} {len(billet.jambes) or '?':>4} {cote:>7.2f} "
+              f"{(billet.mise or 0):>5.0f}€  {billet.proba:>7.1%}  {statut or 'inconnu'}")
+        if statut and billet.mise:
+            mises += billet.mise
+            if statut == "gagne":
+                # Le boost s'applique au benefice, pas a la mise rendue.
+                gains += billet.mise + billet.mise * (cote - 1) * (1 + billet.boost)
+            if billet.jambes:
+                compte = par_taille.setdefault(len(billet.jambes), [0, 0])
+                compte[0] += 1
+                compte[1] += statut == "gagne"
+        for j in billet.jambes:
+            if j.resultat:
+                jambes_connues += 1
+                jambes_gagnees += j.resultat == "gagne"
+                compte = par_type.setdefault(j.type, [0, 0])
+                compte[0] += 1
+                compte[1] += j.resultat == "gagne"
+        corrigee = version_corrigee(billet)
+        if corrigee and billet.mise and all(j.resultat for j in corrigee.jambes):
+            corrigees[0] += billet.mise
+            if issue(corrigee) == "gagne":
+                corrigees[1] += billet.mise * corrigee.cote_calculee
+
+    print(f"\nTickets réglés : misé {mises:.0f} €, repris {gains:.0f} €, net {gains - mises:+.0f} €.")
+    for taille, (joues, gagnes) in sorted(par_taille.items()):
+        print(f"  à {taille} sélections : {gagnes}/{joues} gagnés")
+    if jambes_connues:
+        print(f"Sélections au résultat connu : {jambes_gagnees}/{jambes_connues} gagnées "
+              f"({jambes_gagnees / jambes_connues:.0%}).")
+        for type_, (n, g) in sorted(par_type.items(), key=lambda item: -item[1][0]):
+            print(f"  {NOMS.get(type_, type_):<38} {g}/{n}")
+    if corrigees[0]:
+        print(f"\nAvec les versions corrigées, à mise égale : misé {corrigees[0]:.0f} €, "
+              f"repris {corrigees[1]:.0f} €, net {corrigees[1] - corrigees[0]:+.0f} €.")
+    return 0
+
+
 def construire_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ticket",
@@ -245,6 +383,20 @@ def construire_parser() -> argparse.ArgumentParser:
     test = sous.add_parser("backtest", help="mesurer la règle sur les saisons passées")
     options_regle(test)
     test.set_defaults(fonction=cmd_backtest)
+
+    analyser = sous.add_parser("analyser", help="analyser un ticket joué (capture ou cotes)")
+    analyser.add_argument("captures", nargs="*", help="captures d'écran ou photos du ticket")
+    analyser.add_argument("--cotes", type=float, nargs="+", help="saisir les cotes à la main")
+    analyser.add_argument("--mise", type=float)
+    analyser.add_argument("--journal", action="store_true", help="ajouter au journal")
+    analyser.set_defaults(fonction=cmd_analyser)
+
+    jrn = sous.add_parser("journal", help="tes tickets joués : bilan et erreurs récurrentes")
+    jrn.add_argument("--importer", help="fichier JSON de tickets à ajouter")
+    jrn.add_argument("--statut", nargs=2, metavar=("N", "gagne|perdu"),
+                     help="régler un ticket du journal")
+    jrn.add_argument("--detail", type=int, metavar="N", help="analyse détaillée d'un ticket")
+    jrn.set_defaults(fonction=cmd_journal)
 
     sous.add_parser("bilan", help="régler les tickets et comparer annoncé / réel").set_defaults(
         fonction=cmd_bilan

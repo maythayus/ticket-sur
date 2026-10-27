@@ -113,3 +113,34 @@ class Suivi(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from ticketsur.analyse import Jambe, classer, depuis_dict, diagnostiquer, issue, version_corrigee
+
+
+class AnalyseTicket(unittest.TestCase):
+    def test_classement_des_paris(self):
+        self.assertEqual(classer("Buteur ou son remplaçant marque : Lamine Yamal"), "buteur")
+        self.assertEqual(classer("Double Chance (Mi-temps) : Nul/Turquie"), "mi_temps")
+        self.assertEqual(classer("Quelle équipe marquera ? : Les 2 équipes marquent"), "deux_marquent")
+        self.assertEqual(classer("Double Chance et les 2 équipes marquent : N2/Oui"), "combine_maison")
+        self.assertEqual(classer("1N2 : Ukraine"), "resultat")
+        self.assertEqual(classer("Vainqueur : Shelton", "tennis"), "autre_sport")
+
+    def test_ticket_long_signale_et_raccourci(self):
+        billet = depuis_dict({"mise": 25, "jambes": [
+            {"match": "A", "pari": "1N2 : A", "cote": 1.30, "resultat": "gagne"},
+            {"match": "B", "pari": "1N2 : B", "cote": 2.20, "resultat": "perdu"},
+            {"match": "C", "pari": "Buteur : X", "cote": 1.80, "resultat": "gagne"},
+            {"match": "D", "pari": "Les 2 équipes marquent : Oui", "cote": 1.25, "resultat": "gagne"},
+        ]})
+        messages = " ".join(a.message for a in diagnostiquer(billet))
+        self.assertIn("4 sélections", messages)
+        self.assertIn("buteur", messages)
+        self.assertIn("limite", messages)
+        corrigee = version_corrigee(billet)
+        self.assertEqual([j.match for j in corrigee.jambes], ["A"])
+        self.assertEqual((issue(billet), issue(corrigee)), ("perdu", "gagne"))
+
+    def test_probabilite_estimee(self):
+        self.assertAlmostEqual(Jambe("A", "", 1.80, "resultat").proba, 0.5)

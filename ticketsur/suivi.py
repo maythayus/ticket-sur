@@ -31,7 +31,42 @@ def ouvrir(chemin: Path) -> sqlite3.Connection:
         )
         """
     )
+    connexion.execute(
+        """
+        CREATE TABLE IF NOT EXISTS journal (
+            id INTEGER PRIMARY KEY,
+            ajoute_le TEXT NOT NULL,
+            billet TEXT NOT NULL            -- ticket joue chez un bookmaker, en JSON
+        )
+        """
+    )
     return connexion
+
+
+def journaliser(connexion: sqlite3.Connection, billet: dict) -> int:
+    with connexion:
+        curseur = connexion.execute(
+            "INSERT INTO journal (ajoute_le, billet) VALUES (datetime('now', 'localtime'), ?)",
+            (json.dumps(billet, ensure_ascii=False),),
+        )
+    return int(curseur.lastrowid)
+
+
+def journal(connexion: sqlite3.Connection) -> list[tuple[int, dict]]:
+    return [(ligne["id"], json.loads(ligne["billet"]))
+            for ligne in connexion.execute("SELECT * FROM journal ORDER BY id")]
+
+
+def corriger_statut(connexion: sqlite3.Connection, numero: int, statut: str) -> bool:
+    ligne = connexion.execute("SELECT billet FROM journal WHERE id = ?", (numero,)).fetchone()
+    if not ligne:
+        return False
+    billet = json.loads(ligne["billet"])
+    billet["statut"] = statut
+    with connexion:
+        connexion.execute("UPDATE journal SET billet = ? WHERE id = ?",
+                          (json.dumps(billet, ensure_ascii=False), numero))
+    return True
 
 
 def enregistrer(
