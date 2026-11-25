@@ -17,6 +17,7 @@ from ticketsur.analyse import NOMS, Billet, depuis_dict, diagnostiquer, issue, v
 from ticketsur.backtest import Regle, backtest
 from ticketsur.buteurs import chercher as chercher_buteurs
 from ticketsur.calibration import Calibration, calibrer
+from ticketsur.combines import COMPOSITIONS, backtest_combines, construire, esperance
 from ticketsur.donnees import charger_historique, maj_historique, matchs_a_venir, saison_de
 from ticketsur.marches import MARCHES
 from ticketsur.selection import Selection, Ticket, candidats, meilleurs_tickets
@@ -132,6 +133,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         return 1
     saisons = sorted({saison_de(m.jour) for m in matchs})
     test = saisons[3:]  # trois saisons d'apprentissage au minimum
+    if args.combines:
+        return _backtest_combines(matchs, test)
     print(f"Backtest en avant sur {len(test)} saisons ({test[0]} -> {test[-1]}), "
           f"un ticket par jour de match, {args.selections} sélection(s) max, "
           f"cotes décotées de {1 - config.DECOTE:.0%}\n")
@@ -149,6 +152,98 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     print("\nréussite : tickets gagnés / joués.  annoncé : moyenne des probabilités affichées.\n"
           "gain/ticket : bénéfice moyen pour 1 € misé (négatif = perte).\n"
           "pire série : plus longue suite de tickets perdus d'affilée.")
+    return 0
+
+
+def _backtest_combines(matchs: list, test: list[str]) -> int:
+    print(f"Backtest en avant des combinés sur {len(test)} saisons ({test[0]} -> {test[-1]}), "
+          f"un combiné par jour de match, cotes décotées de {1 - config.DECOTE:.0%}\n")
+    print(f"{'combiné':<46}{'tickets':>8}{'réussite':>10}{'annoncé':>9}"
+          f"{'gain/ticket':>13}{'pire série':>12}")
+    for nom, bilan in backtest_combines(matchs, test).items():
+        print(f"{nom:<46}{bilan.tickets:>8}{bilan.taux:>10.1%}{bilan.taux_prevu:>9.1%}"
+              f"{bilan.roi:>+13.1%}{bilan.serie_noire:>12}")
+    print("\nréussite contre annoncé : la probabilité affichée est-elle tenue ?\n"
+          "gain/ticket : suppose une marge de 7 % sur les cotes estimées (2 marquent, mi-temps).")
+    return 0
+
+
+def _verifier_combines(
+    selections: list[Selection], tickets_de: Callable[[set[tuple]], list],
+) -> tuple[list, dict[tuple, Verdict] | None]:
+    """Fait verifier par Claude les selections des combines, puis remplace les « eviter ».
+
+    Deux tours au plus : les remplacantes du premier tour sont verifiees au second.
+    """
+    verdicts: dict[tuple, Verdict] = {}
+    exclues: set[tuple] = set()
+    for _ in range(2):
+        tickets = tickets_de(exclues)
+        a_verifier: list[Selection] = []
+        for _nom, ticket in tickets:
+            for s in ticket.selections if ticket else []:
+                if s.cle not in verdicts and s not in a_verifier:
+                    a_verifier.append(s)
+        if not a_verifier:
+            return tickets, verdicts
+        for debut in range(0, len(a_verifier), 8):
+            verdicts.update(verifier(a_verifier[debut : debut + 8]))
+        exclues = {cle for cle, v in verdicts.items() if v.verdict == "eviter"}
+    return tickets_de(exclues), verdicts
+
+
+def cmd_combines(args: argparse.Namespace) -> int:
+    calibration = _calibration()
+    if not calibration:
+        return 1
+    jour, matchs = _matchs_du_jour(args)
+    if not matchs:
+        print(f"Aucun match couvert à venir le {_date_longue(jour)}.")
+        return 0
+    selections = candidats(matchs, calibration, args.cote_min_selection, mi_temps=True)
+
+    def tickets_de(exclues: set[tuple]) -> list:
+        return [(c.nom, construire(selections, c, exclues)) for c in COMPOSITIONS]
+
+    verdicts = None
+    if args.sans_claude:
+        tickets = tickets_de(set())
+    else:
+        print(f"{len(matchs)} matchs, vérification de l'actualité par Claude…", flush=True)
+        try:
+            tickets, verdicts = _verifier_combines(selections, tickets_de)
+        except VerificationImpossible as exc:
+            print(f"Vérification Claude impossible ({exc}) : combinés non vérifiés.",
+                  file=sys.stderr)
+            tickets = tickets_de(set())
+
+    print(f"\nCombinés du {_date_longue(jour)} ({len(matchs)} matchs couverts)")
+    resume = []
+    for nom, ticket in tickets:
+        if not ticket:
+            print(f"\n{nom} : pas assez de sélections fiables aujourd'hui.")
+            continue
+        rend = esperance(ticket)
+        print(f"\n{nom}\n  cote ~{ticket.cote:.2f}, chance {ticket.proba:.1%} "
+              f"(1 fois sur {round(1 / ticket.proba)}), cote à exiger {1 / ticket.proba:.2f}, "
+              f"rend en moyenne {rend:.0%} de la mise")
+        for s in ticket.selections:
+            envoi = s.match.coup_envoi()
+            cote_txt = f"~{s.cote:.2f} (estimée)" if s.cote_estimee else f"{s.cote:.2f}"
+            print(f"    {envoi.strftime('%H:%M') if envoi else '--:--'}  {s.match.ligue:<4}"
+                  f"{s.match.domicile} - {s.match.exterieur} : {s.libelle}, {cote_txt}, {s.proba:.0%}")
+            if verdicts and s.cle in verdicts:
+                v = verdicts[s.cle]
+                print(f"           Claude [{v.verdict}] {v.raison}")
+        resume.append(f"{nom.split(':')[0]} : cote ~{ticket.cote:.2f}, {ticket.proba:.0%}")
+    if verdicts is None:
+        print("\n  Non vérifié par Claude.")
+    print(f"\nCalibré sur {calibration.matchs} matchs. Les cotes estimées (2 marquent, mi-temps) "
+          "sont à vérifier chez ton bookmaker : joue seulement s'il paie au moins la cote à exiger.\n"
+          f"Mise : {config.MISE_MAX:.0f} € au plus par combiné ; aucun ne rend plus que la mise "
+          "en moyenne (`ticket backtest --combines`).")
+    if args.notifier and resume:
+        _notifier("Combinés du jour", "\n".join(resume))
     return 0
 
 
@@ -411,6 +506,9 @@ def construire_parser() -> argparse.ArgumentParser:
         p.add_argument("--selections", type=int, default=config.MAX_SELECTIONS,
                        help="nombre maximal de sélections par ticket")
         p.add_argument("--cote-min-selection", type=float, default=config.COTE_MIN_SELECTION)
+        p.add_argument("--risque", choices=sorted(config.PROFILS_RISQUE),
+                       help="profil de risque : remplace --cote-min et --cote-max "
+                            "(prudent 1.30-1.60, equilibre 1.50-2.20, offensif 1.80-2.60)")
 
     jour = sous.add_parser("jour", help="ticket du jour")
     options_regle(jour)
@@ -427,8 +525,16 @@ def construire_parser() -> argparse.ArgumentParser:
     but.add_argument("--equipes", type=int, default=4, help="nombre d'attaques étudiées")
     but.set_defaults(fonction=cmd_buteurs)
 
+    comb = sous.add_parser("combines", help="combinés 4 (2 marquent), 6 et 8 (panachés) du jour")
+    comb.add_argument("--date", help="AAAA-MM-JJ (défaut : aujourd'hui)")
+    comb.add_argument("--sans-claude", action="store_true", help="sans vérification de l'actualité")
+    comb.add_argument("--notifier", action="store_true", help="notification de bureau")
+    comb.add_argument("--cote-min-selection", type=float, default=config.COTE_MIN_SELECTION)
+    comb.set_defaults(fonction=cmd_combines)
+
     test = sous.add_parser("backtest", help="mesurer la règle sur les saisons passées")
     options_regle(test)
+    test.add_argument("--combines", action="store_true", help="mesurer les combinés à la place")
     test.set_defaults(fonction=cmd_backtest)
 
     analyser = sous.add_parser("analyser", help="analyser un ticket joué (capture ou cotes)")
@@ -456,6 +562,8 @@ def construire_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = construire_parser().parse_args(argv)
+    if getattr(args, "risque", None):
+        args.cote_min, args.cote_max = config.PROFILS_RISQUE[args.risque]
     logging.basicConfig(level=logging.INFO if args.verbeux else logging.WARNING,
                         format="%(levelname)s %(message)s")
     return args.fonction(args)

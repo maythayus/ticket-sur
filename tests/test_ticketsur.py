@@ -176,3 +176,58 @@ class Buts(unittest.TestCase):
         self.assertGreater(titulaire, proba_marque(2.0, 6, 20, False))
         self.assertGreater(titulaire, proba_marque(2.0, 2, 20, True))
         self.assertLess(proba_marque(3.0, 20, 20, True), 0.85)
+
+
+class TestMiTempsEtCombines(unittest.TestCase):
+    def _match(self, nom: str, cotes: dict, buts=(1, 1), mt=(0, 0)) -> Match:
+        return Match("E0", date(2026, 11, 25), "20:00", nom, f"{nom} B", cotes, buts, mt)
+
+    def test_probas_mi_temps_somment_a_un(self):
+        probas = probas_justes({"1": 1.8, "N": 3.6, "2": 4.5, "+2.5": 1.9, "-2.5": 1.95})
+        total = probas["MT1"] + probas["MTN"] + probas["MT2"]
+        self.assertAlmostEqual(total, 1.0, places=6)
+        # Le nul a la pause est l'issue la plus frequente d'un match equilibre.
+        self.assertGreater(probas["MTN"], 0.3)
+
+    def test_gagne_mi_temps_lit_le_score_a_la_pause(self):
+        self.assertTrue(gagne("MT1", 1, 2, (1, 0)))
+        self.assertTrue(gagne("MTN", 3, 0, (0, 0)))
+        self.assertFalse(gagne("MT2", 0, 1, (0, 0)))
+        with self.assertRaises(ValueError):
+            gagne("MT1", 1, 0)
+
+    def test_lire_csv_score_mi_temps(self):
+        texte = ("Div,Date,Time,HomeTeam,AwayTeam,FTHG,FTAG,HTHG,HTAG,AvgH,AvgD,AvgA\n"
+                 "E0,25/11/2026,20:00,A,B,2,1,1,1,1.9,3.5,4.0\n")
+        (match,) = lire_csv(texte)
+        self.assertEqual(match.buts_mt, (1, 1))
+
+    def test_ticket_du_jour_sans_mi_temps(self):
+        match = self._match("A", {"1": 1.8, "N": 3.6, "2": 4.5, "+2.5": 1.9, "-2.5": 1.95})
+        marches = {s.marche for s in candidats([match], Calibration(), 1.01)}
+        self.assertFalse(marches & {"MT1", "MTN", "MT2"})
+        avec = {s.marche for s in candidats([match], Calibration(), 1.01, mi_temps=True)}
+        self.assertTrue(avec >= {"MT1", "MTN", "MT2"})
+
+    def test_combine_un_match_par_selection_et_composition_tenue(self):
+        from ticketsur.combines import COMPOSITIONS, construire
+
+        cotes = {"1": 1.35, "N": 5.0, "2": 8.0, "+2.5": 1.45, "-2.5": 2.7}
+        matchs = [self._match(f"E{i}", cotes) for i in range(10)]
+        selections = candidats(matchs, Calibration(), 1.01, mi_temps=True)
+        for composition in COMPOSITIONS[2:]:
+            ticket = construire(selections, composition)
+            self.assertIsNotNone(ticket)
+            self.assertEqual(len(ticket.selections), composition.taille)
+            self.assertEqual(len({s.match.cle for s in ticket.selections}), composition.taille)
+            self.assertEqual(sum(s.marche in {"MT1", "MTN", "MT2"} for s in ticket.selections), 2)
+        # Trop peu de matchs : pas de combine plutot qu'un combine incomplet.
+        self.assertIsNone(construire(selections[:3], COMPOSITIONS[3]))
+
+    def test_profil_de_risque_remplace_la_fourchette(self):
+        from ticketsur import config
+        from ticketsur.cli import construire_parser
+
+        args = construire_parser().parse_args(["jour", "--risque", "offensif"])
+        args.cote_min, args.cote_max = config.PROFILS_RISQUE[args.risque]
+        self.assertEqual((args.cote_min, args.cote_max), (1.80, 2.60))

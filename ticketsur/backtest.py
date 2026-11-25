@@ -73,7 +73,7 @@ def backtest(matchs: list[Match], saisons_test: list[str], regle: Regle, decote:
             if not tickets:
                 continue
             ticket = tickets[0]
-            reussi = all(gagne(s.marche, *s.match.buts) for s in ticket.selections)
+            reussi = all(gagne(s.marche, *s.match.buts, s.match.buts_mt) for s in ticket.selections)
             paiement = math.prod(s.cote * decote for s in ticket.selections)
             joues += 1
             gagnes += reussi

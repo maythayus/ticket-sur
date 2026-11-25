@@ -58,3 +58,17 @@ def attendus(p1: float, p2: float, plus_2_5: float) -> tuple[float, float]:
 
 def deux_marquent(dom: float, ext: float) -> float:
     return (1 - math.exp(-dom)) * (1 - math.exp(-ext))
+
+
+# Part des buts marques avant la pause, stable d'une ligue a l'autre (environ 45 %). Le
+# biais residuel (nuls a la pause plus frequents que ne le dit Poisson) est corrige par
+# la calibration sur les scores de mi-temps de l'historique.
+PART_MI_TEMPS = 0.45
+
+
+def mi_temps(dom: float, ext: float, part: float = PART_MI_TEMPS) -> dict[str, float]:
+    """Probabilites du 1 N 2 a la mi-temps, buts attendus reduits a la premiere periode."""
+    a, b = _loi(dom * part), _loi(ext * part)
+    p1 = sum(a[i] * sum(b[:i]) for i in range(1, len(a)))
+    pn = sum(a[i] * b[i] for i in range(len(a)))
+    return {"MT1": p1, "MTN": pn, "MT2": max(1 - p1 - pn, 0.0)}

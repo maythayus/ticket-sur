@@ -37,6 +37,7 @@ class Match:
     exterieur: str
     cotes: dict[str, float]
     buts: tuple[int, int] | None = None
+    buts_mt: tuple[int, int] | None = None  # score a la mi-temps
 
     @property
     def cle(self) -> tuple[str, date, str, str]:
@@ -106,6 +107,9 @@ def lire_csv(texte: str) -> list[Match]:
         buts = None
         if (ligne.get("FTHG") or "").strip().isdigit() and (ligne.get("FTAG") or "").strip().isdigit():
             buts = (int(ligne["FTHG"]), int(ligne["FTAG"]))
+        buts_mt = None
+        if (ligne.get("HTHG") or "").strip().isdigit() and (ligne.get("HTAG") or "").strip().isdigit():
+            buts_mt = (int(ligne["HTHG"]), int(ligne["HTAG"]))
         matchs.append(
             Match(
                 ligue=ligne["Div"].strip(),
@@ -115,6 +119,7 @@ def lire_csv(texte: str) -> list[Match]:
                 exterieur=exterieur,
                 cotes=cotes,
                 buts=buts,
+                buts_mt=buts_mt,
             )
         )
     return matchs

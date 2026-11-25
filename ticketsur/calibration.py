@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ticketsur.donnees import Match
-from ticketsur.marches import MARCHES, gagne, probas_justes
+from ticketsur.marches import MARCHES, MI_TEMPS, gagne, probas_justes
 
 
 @dataclass
@@ -102,6 +102,8 @@ def calibrer(matchs: Iterable[Match]) -> Calibration:
             continue
         total += 1
         for marche, proba in probas_justes(match.cotes).items():
-            paires[marche].append((proba, gagne(marche, *match.buts)))
+            if marche in MI_TEMPS and match.buts_mt is None:
+                continue
+            paires[marche].append((proba, gagne(marche, *match.buts, match.buts_mt)))
     courbes = {marche: ajuster(liste) for marche, liste in paires.items() if len(liste) >= 400}
     return Calibration(courbes, total)

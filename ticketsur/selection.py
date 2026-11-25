@@ -10,7 +10,7 @@ from itertools import combinations
 from ticketsur import config
 from ticketsur.calibration import Calibration
 from ticketsur.donnees import Match
-from ticketsur.marches import COTES_ESTIMEES, cote, libelle, probas_justes
+from ticketsur.marches import COTES_ESTIMEES, MI_TEMPS, cote, libelle, probas_justes
 
 
 @dataclass
@@ -48,12 +48,22 @@ class Ticket:
 
 
 def candidats(
-    matchs: Iterable[Match], calibration: Calibration, cote_min_selection: float
+    matchs: Iterable[Match],
+    calibration: Calibration,
+    cote_min_selection: float,
+    *,
+    mi_temps: bool = False,
 ) -> list[Selection]:
-    """Toutes les selections jouables, de la plus probable a la moins probable."""
+    """Toutes les selections jouables, de la plus probable a la moins probable.
+
+    Les marches de mi-temps ne sont proposes que sur demande (`mi_temps`) : le ticket du
+    jour est regle sur le score final, seul publie par `donnees.resultats`.
+    """
     liste: list[Selection] = []
     for match in matchs:
         for marche, proba_marche in probas_justes(match.cotes).items():
+            if marche in MI_TEMPS and not mi_temps:
+                continue
             proba = calibration.proba(marche, proba_marche)
             if marche in COTES_ESTIMEES:
                 # Pas de cote dans la source : celle qu'un bookmaker proposerait a peu

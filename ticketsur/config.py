@@ -54,6 +54,16 @@ COTE_MAX_TICKET = float(os.getenv("TICKET_COTE_MAX", "2.20"))
 COTE_MIN_SELECTION = float(os.getenv("TICKET_COTE_MIN_SELECTION", "1.15"))
 MAX_SELECTIONS = int(os.getenv("TICKET_MAX_SELECTIONS", "2"))
 
+# Profils de risque du ticket du jour (fourchette de cote), d'apres le backtest en avant :
+# prudent ~73 % de reussite, equilibre ~62 %, offensif ~51 % (pire serie : 8 perdus).
+# Au-dela (2.50-4.00 : 38 %, jusqu'a 21 perdus d'affilee), ce n'est plus raisonnable
+# pour un ticket quotidien ; --cote-min/--cote-max restent libres.
+PROFILS_RISQUE: dict[str, tuple[float, float]] = {
+    "prudent": (1.30, 1.60),
+    "equilibre": (1.50, 2.20),
+    "offensif": (1.80, 2.60),
+}
+
 # Les cotes de football-data sont une moyenne du marche ; un seul bookmaker paie
 # d'ordinaire un peu moins. Le backtest applique cette decote a chaque selection.
 DECOTE = float(os.getenv("TICKET_DECOTE", "0.97"))

@@ -80,6 +80,9 @@ systemctl --user disable --now ticket-sur.timer   # couper le minuteur
 ```bash
 ticket jour                                # ticket du jour, vérifié par Claude
 ticket jour --cote-min 1.30 --cote-max 1.60   # plus sûr, rapporte moins
+ticket jour --risque offensif              # plus de risque : cote 1.80-2.60, ~51 %
+ticket combines                            # combinés 4, 6 et 8 du jour, vérifiés par Claude
+ticket backtest --combines                 # réussite réelle de ces combinés
 ticket jour --date 2026-10-28 --essai      # un autre jour, sans l'enregistrer
 ticket jour --sans-claude                  # sans vérification (instantané)
 ticket jour --buteurs                      # avec les buteurs potentiels
@@ -92,6 +95,50 @@ ticket maj                                 # retélécharger, recalibrer
 
 **Cote affichée** = moyenne du marché. Joue seulement si ton bookmaker paie au moins
 autant. Il est souvent un peu en dessous, et c'est déjà compté dans le backtest.
+
+## Profils de risque
+
+`--risque` remplace la fourchette de cote du ticket du jour (backtest, 2 sélections max) :
+
+| Profil | Cote | Réussite réelle | Gain moyen | Pire série perdue |
+| --- | --- | ---: | ---: | ---: |
+| `prudent` | 1.30 – 1.60 | 72,8 % | −6,5 % | 6 |
+| `equilibre` (défaut) | 1.50 – 2.20 | 61,9 % | −8,9 % | 6 |
+| `offensif` | 1.80 – 2.60 | 51,5 % | −9,7 % | 8 |
+
+Pas de profil au-delà : à 2.50 – 4.00, le ticket passe 38 % du temps et peut rester
+21 jours d'affilée sans gagner. `--cote-min` / `--cote-max` restent libres.
+
+## Combinés 4, 6 et 8 sélections
+
+`ticket combines` construit quatre combinés à composition imposée, une sélection par
+match, chacune calibrée sur l'historique, puis fait vérifier l'actualité de chaque
+sélection par Claude (une sélection « à éviter » est remplacée par la suivante) :
+
+- **4 matchs, les 2 équipes marquent : 4 oui** ;
+- **4 matchs, les 2 équipes marquent : 2 oui, 2 non** ;
+- **combiné 6** : 2 mi-temps, 2 doubles chances, 2 plus/moins de 2.5 buts ;
+- **combiné 8** : 2 mi-temps, 3 doubles chances, 3 plus/moins de 2.5 buts.
+
+La **mi-temps** (qui mène à la pause) est déduite des buts attendus, puis calibrée sur
+les scores à la mi-temps de l'historique, comme les autres marchés. Sa cote, comme celle
+des 2 équipes marquent, est **estimée** : vérifie-la chez ton bookmaker.
+
+Pour chaque combiné : chance de passer, **cote à exiger** (en dessous, le pari perd de
+l'argent même si la probabilité est juste) et ce qu'il rend en moyenne. Le risque est
+**calculable** : sur neuf saisons jouées en avant, la réussite annoncée est tenue à un
+point près. Il n'est **pas rentable** :
+
+| Combiné | Tickets | Réussite réelle | Annoncée | Gain moyen | Pire série perdue |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 4 × les 2 marquent (oui) | 1 175 | 15,1 % | 15,0 % | −30,7 % | 43 |
+| 4 × les 2 marquent (2 oui, 2 non) | 847 | 14,4 % | 14,8 % | −36,0 % | 35 |
+| 6 panaché | 1 488 | 9,3 % | 10,1 % | −43,9 % | 61 |
+| 8 panaché | 1 304 | 5,7 % | 5,6 % | −44,3 % | 74 |
+
+La marge se paie à chaque sélection : plus le combiné est long, plus il coûte. Les
+combinés ne sont pas enregistrés dans le suivi de `ticket bilan`, qui reste celui du
+ticket du jour.
 
 ## « Les 2 équipes marquent » et buteurs potentiels
 
@@ -166,14 +213,15 @@ calibration honnête.
 | Module | Rôle |
 | --- | --- |
 | `donnees.py` | téléchargement et lecture des CSV, matchs à venir, scores |
-| `marches.py` | probabilités sans marge, cotes, règlement des 8 marchés |
+| `marches.py` | probabilités sans marge, cotes, règlement des 13 marchés (dont mi-temps) |
 | `calibration.py` | régression isotonique par marché |
 | `selection.py` | meilleurs tickets d'une fourchette de cote |
 | `verification.py` | Claude Code en mode `-p`, recherche web, sortie JSON structurée |
 | `backtest.py` | saisons rejouées en avant |
+| `combines.py` | combinés 4, 6 et 8 à composition imposée, et leur backtest |
 | `suivi.py` | SQLite : un ticket par jour, réglé avec le score réel ; journal des tickets joués |
 | `analyse.py` | diagnostic d'un ticket joué, version corrigée |
-| `buts.py` | buts attendus déduits des cotes, « les 2 équipes marquent » |
+| `buts.py` | buts attendus déduits des cotes, « les 2 équipes marquent », mi-temps |
 | `buteurs.py` | buteurs potentiels : recherche Claude + buts attendus, cote à exiger |
 
 Tests : `python3 -m unittest discover -s tests`
